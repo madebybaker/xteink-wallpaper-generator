@@ -1,0 +1,1310 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xteink X3 / X4 Wallpaper Generator</title>
+<script>
+  // Apply the saved theme before first paint to avoid a flash. Dark is the default.
+  (function () {
+    try {
+      var saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark")
+        document.documentElement.setAttribute("data-theme", saved);
+    } catch (_) {}
+  })();
+</script>
+<style>
+  :root, :root[data-theme="dark"] {
+    --bg: #2e3440;
+    --panel: #3b4252;
+    --panel-2: #434c5e;
+    --panel-hover: #4c566a;
+    --line: #4c566a;
+    --text: #eceff4;
+    --muted: #a3adc2;
+    --accent: #88c0d0;
+    --accent-2: #5e81ac;
+    --accent-2-hover: #4d6d94;
+    --checker: #3b4252;   /* canvas transparency checker squares */
+    --checker-bg: #333a47;
+  }
+  :root[data-theme="light"] {
+    --bg: #eceff4;            /* nord6 */
+    --panel: #ffffff;
+    --panel-2: #e5e9f0;       /* nord5 */
+    --panel-hover: #dde3ec;
+    --line: #d8dee9;          /* nord4 */
+    --text: #2e3440;          /* nord0 */
+    --muted: #4c566a;         /* nord3 */
+    --accent: #5e81ac;        /* nord10 — frost, darkened for contrast */
+    --accent-2: #5e81ac;      /* nord10 */
+    --accent-2-hover: #4c6f96;
+    --checker: #d8dee9;       /* nord4 */
+    --checker-bg: #e5e9f0;    /* nord5 */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  header .head-text { min-width: 0; }
+  #themeToggle {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    white-space: nowrap;
+  }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: .2px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; }
+  footer { padding: 16px 24px 24px; text-align: center; font-size: 12.5px; }
+  footer a { color: var(--muted); text-decoration: none; }
+  footer a:hover { color: var(--accent); }
+  main {
+    display: grid;
+    grid-template-columns: 1fr 320px 1fr;
+    gap: 20px;
+    padding: 24px;
+    align-items: start;
+  }
+  @media (max-width: 1000px) {
+    main { grid-template-columns: 1fr; }
+  }
+  /* min-width:0 lets these grid tracks shrink below the canvas's intrinsic
+     width, so the input re-fits when the window narrows (not just widens). */
+  .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  #drop {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 300px;
+    border: 2px dashed var(--line);
+    border-radius: 10px;
+    color: var(--muted);
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    padding: 20px;
+  }
+  #drop.drag { border-color: var(--accent); background: rgba(136,192,208,.10); color: var(--text); }
+  #drop small { display:block; margin-top:8px; font-size:12px; opacity:.8; }
+  .stage { display: none; }
+  .stage.show { display: block; }
+  .canvas-wrap {
+    display: flex;
+    justify-content: center;
+    background:
+      linear-gradient(45deg, var(--checker) 25%, transparent 25%) 0 0/20px 20px,
+      linear-gradient(-45deg, var(--checker) 25%, transparent 25%) 0 10px/20px 20px,
+      linear-gradient(45deg, transparent 75%, var(--checker) 75%) 10px -10px/20px 20px,
+      linear-gradient(-45deg, transparent 75%, var(--checker) 75%) -10px 0/20px 20px,
+      var(--checker-bg);
+    border-radius: 8px;
+    padding: 10px;
+  }
+  #inputCanvas { cursor: grab; touch-action: none; border-radius: 2px; }
+  #inputCanvas.grabbing { cursor: grabbing; }
+  #outputCanvas {
+    /* Displayed smaller than native (528x792) so 4-level dither dots blend,
+       matching how they look on the real ~300ppi panel. */
+    width: 264px;
+    height: 396px;
+    image-rendering: auto;
+    border-radius: 2px;
+    display: block;
+  }
+
+  /* ---- CSS-drawn device bezel around the output preview ----
+     Evokes the Xteink body (not a photo). Body colour (black/white),
+     device (x3/x4) and orientation are driven by classes set in JS. */
+  .device-stage { display: flex; justify-content: center; padding: 16px 6px 8px; }
+  .device {
+    position: relative;
+    padding: 13px;
+    border-radius: 18px;
+    transition: background .2s, box-shadow .2s;
+  }
+  .device.black {
+    background: linear-gradient(150deg, #3d4046 0%, #17181b 62%);
+    box-shadow: 0 12px 34px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(0,0,0,.35);
+    --screen-ring: #0a0a0b;
+    --btn: #2a2c30;
+    --btn-shade: rgba(0,0,0,.5);
+  }
+  .device.white {
+    background: linear-gradient(150deg, #fdfdfe 0%, #dcdfe5 64%);
+    box-shadow: 0 12px 30px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 1px rgba(0,0,0,.08);
+    --screen-ring: #c2c6cf;
+    --btn: #eceef2;
+    --btn-shade: rgba(0,0,0,.18);
+  }
+  .device .screen {
+    line-height: 0;
+    padding: 7px;
+    border-radius: 7px;
+    background: var(--screen-ring);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.4), inset 0 2px 6px rgba(0,0,0,.45);
+  }
+  /* Page-turn keys. Portrait = on the vertical edges; landscape rotates them
+     onto the top edge. X3 has a key on each side near the top; X4 has a single
+     right-hand rocker around the middle. */
+  .device .key {
+    position: absolute;
+    background: var(--btn);
+    border-radius: 3px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 1px 2px var(--btn-shade);
+  }
+  .device.portrait .key-r { width: 5px; height: 34px; right: -3px; top: 20%; }
+  .device.portrait .key-l { width: 5px; height: 22px; left: -3px; top: 15%; }
+  .device.landscape .key-r { height: 5px; width: 34px; top: -3px; right: 20%; }
+  .device.landscape .key-l { height: 5px; width: 22px; top: -3px; left: 15%; }
+  .device[data-device="x4"].portrait  .key-r { height: 56px; top: 38%; }
+  .device[data-device="x4"].landscape .key-r { width: 56px; right: 38%; }
+  .device[data-device="x4"] .key-l { display: none; }
+  /* Bezel-off: bare canvas with its original drop shadow. */
+  .device.no-bezel { background: none !important; box-shadow: none !important; padding: 0; border-radius: 0; }
+  .device.no-bezel .key { display: none; }
+  .device.no-bezel .screen { padding: 0; background: none; box-shadow: none; }
+  .device.no-bezel .screen canvas { border-radius: 3px; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  button {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  button:hover { background: var(--panel-hover); }
+  button.primary { background: var(--accent-2); border-color: var(--accent-2); color: #fff; font-weight: 600; }
+  button.primary:hover { background: var(--accent-2-hover); }
+  button.active { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  label.field { display: block; margin-bottom: 14px; }
+  label.field .lab { display: flex; justify-content: space-between; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+  label.field .lab b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 500; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  select {
+    width: 100%;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  .meta { color: var(--muted); font-size: 12px; text-align: center; margin-top: 8px; }
+  .hint { color: var(--muted); font-size: 11.5px; margin-top: 8px; }
+  .divider { height: 1px; background: var(--line); margin: 14px 0; border: 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="head-text">
+    <h1>Xteink X3 / X4 Wallpaper Generator</h1>
+    <p>Drop an image → pick your device → frame &amp; tune → download a device-ready wallpaper (native 4-level grey, dither baked in).</p>
+    <p>🔒 Everything runs in your browser — your images are never uploaded and never leave your device.</p>
+  </div>
+  <button id="themeToggle" type="button" title="Toggle light / dark theme" aria-pressed="false">
+    <span id="themeIcon">☀️</span><span id="themeLabel">Light</span>
+  </button>
+</header>
+
+<main>
+  <!-- INPUT -->
+  <div class="col">
+    <div class="card">
+      <h2>Input</h2>
+      <div id="drop">
+        <div>
+          <div>Drop an image here, or click to choose</div>
+          <small>PNG · JPEG · WebP · GIF</small>
+        </div>
+      </div>
+
+      <div id="inputStage" class="stage">
+        <div class="canvas-wrap"><canvas id="inputCanvas"></canvas></div>
+        <div class="row">
+          <button id="rotateBtn" title="Rotate 90°">↻ Rotate 90°</button>
+          <button id="fitWhiteBtn" title="Fit whole image with white bars">Fit (white bars)</button>
+          <button id="fitBlackBtn" title="Fit whole image with black bars">Fit (black bars)</button>
+          <button id="resetFramingBtn" title="Reset crop, zoom and fit">Reset framing</button>
+          <button id="replaceBtn">Replace image</button>
+        </div>
+        <label class="field" id="zoomField" style="margin-top:14px;">
+          <span class="lab">Crop zoom <b id="zoomVal">100%</b></span>
+          <input id="zoom" type="range" min="100" max="400" value="100" step="1">
+        </label>
+        <div class="hint">Drag (or arrow-key) the image to reposition the crop; scroll to zoom. Aspect is locked to the panel.</div>
+      </div>
+    </div>
+    <input id="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="col">
+    <div class="card">
+      <h2>Adjust</h2>
+      <label class="field">
+        <span class="lab">Preset</span>
+      </label>
+      <select id="preset">
+        <option value="custom">Custom</option>
+        <option value="photo">Photo (balanced)</option>
+        <option value="portrait">Portrait / faces</option>
+        <option value="landscape">Landscape / scenery</option>
+        <option value="punchy">Punchy B&amp;W</option>
+        <option value="lineart">Line art / manga</option>
+        <option value="text">Text / screenshot</option>
+        <option value="soft">Soft / faded</option>
+      </select>
+      <div class="hint" id="presetHint">Adjust the sliders yourself, or pick a preset to start from.</div>
+      <hr class="divider">
+      <label class="field">
+        <span class="lab">Dither</span>
+      </label>
+      <select id="dither">
+        <option value="atkinson">Atkinson (default)</option>
+        <option value="floyd">Floyd–Steinberg</option>
+        <option value="jarvis">Jarvis–Judice–Ninke</option>
+        <option value="stucki">Stucki</option>
+        <option value="bayer">Ordered (Bayer 8×8)</option>
+        <option value="bluenoise">Blue noise (void-and-cluster)</option>
+        <option value="none">No dither / nearest (line art)</option>
+      </select>
+      <hr class="divider">
+      <label class="field">
+        <span class="lab">Brightness <b id="brightVal">0</b></span>
+        <input id="bright" type="range" min="-100" max="100" value="0" step="1">
+      </label>
+      <label class="field">
+        <span class="lab">Contrast <b id="contrastVal">0</b></span>
+        <input id="contrast" type="range" min="-100" max="100" value="0" step="1">
+      </label>
+      <label class="field">
+        <span class="lab">Gamma <b id="gammaVal">1.00</b></span>
+        <input id="gamma" type="range" min="0.2" max="3" value="1" step="0.05">
+      </label>
+      <label class="field" style="margin-bottom:0;">
+        <span class="lab">Sharpen <b id="sharpVal">0</b></span>
+        <input id="sharp" type="range" min="0" max="200" value="0" step="1">
+      </label>
+      <hr class="divider">
+      <button id="resetBtn" style="width:100%;">Reset adjustments</button>
+    </div>
+  </div>
+
+  <!-- OUTPUT -->
+  <div class="col">
+    <div class="card" id="outputCard">
+      <h2>Output preview</h2>
+      <label class="field">
+        <span class="lab">Device</span>
+      </label>
+      <select id="device">
+        <option value="x3">Xteink X3 — 528 × 792</option>
+        <option value="x4">Xteink X4 — 480 × 800</option>
+      </select>
+      <div class="row" style="margin-top:10px;">
+        <button id="portraitBtn" class="active" style="flex:1;">Portrait</button>
+        <button id="landscapeBtn" style="flex:1;">Landscape</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="bodyNoneBtn" style="flex:1;">No bezel</button>
+        <button id="bodyBlackBtn" class="active" style="flex:1;">Black bezel</button>
+        <button id="bodyWhiteBtn" style="flex:1;">White bezel</button>
+      </div>
+      <div class="device-stage" id="deviceStage">
+        <div id="deviceFrame" class="device black portrait" data-device="x3">
+          <span class="key key-l"></span>
+          <span class="key key-r"></span>
+          <div class="screen"><canvas id="outputCanvas" width="528" height="792"></canvas></div>
+        </div>
+      </div>
+      <div class="meta" id="outMeta">528 × 792 · 4-level grey · device look</div>
+      <label class="field" style="margin:14px 0 0;">
+        <span class="lab">Export format</span>
+      </label>
+      <select id="format">
+        <option value="bmp4">4-bit BMP, native palette, dither baked in — default</option>
+        <option value="pxc">PXC (CrossPoint native, 2bpp, dithered)</option>
+        <option value="gray24">24-bit greyscale BMP (smooth)</option>
+      </select>
+      <div class="hint" id="formatHint">Dither baked in; palette maps 1:1 to the four native panel greys (CrossPoint).</div>
+      <div class="row" style="margin-top:14px;">
+        <button id="downloadBtn" class="primary" style="flex:1;" disabled>Download BMP</button>
+      </div>
+      <div class="meta" id="sizeMeta">—</div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <a href="https://buymeacoffee.com/madebybaker" target="_blank" rel="noopener">☕ Buy me a coffee</a>
+</footer>
+
+<script>
+"use strict";
+
+// ---- Native panel constants ----
+// Both panels are the same 4-level grey; only the resolution/aspect differs.
+const DEVICES = {
+  x3: { id: "x3", w: 528, h: 792 },   // Xteink X3
+  x4: { id: "x4", w: 480, h: 800 },   // Xteink X4
+};
+let deviceId = "x3";
+let orientation = "portrait";                 // "portrait" | "landscape" (swaps W/H)
+const LEVELS = [0, 85, 170, 255];             // #000 #555 #AAA #FFF native greys
+
+// Current target geometry as one immutable value (rebuilt by applyPanel). The
+// factory owns the landscape swap, so nothing else re-derives width vs height.
+function makePanel(deviceId, orientation) {
+  const d = DEVICES[deviceId] || DEVICES.x3;
+  const [w, h] = orientation === "landscape" ? [d.h, d.w] : [d.w, d.h];
+  return { w, h, aspect: w / h };
+}
+let panel = makePanel(deviceId, orientation);
+
+// ---- State ----
+const state = {
+  srcCanvas: null,   // source image (rotations baked in on the fly)
+  fileName: "wallpaper",
+  fitMode: "crop",   // "crop" | "white" | "black" (bar colour when fitting)
+  baseW: 0, baseH: 0,// largest target-aspect rect in source coords (at zoom 1)
+  cx: 0, cy: 0,      // crop centre in source coords
+  zoom: 1,           // >=1, tighter crop
+  dispScale: 1,      // source->display scale for input canvas
+};
+
+const $ = id => document.getElementById(id);
+const inputCanvas = $("inputCanvas");
+const octx = $("outputCanvas").getContext("2d");
+let outputIdx = null;   // Uint8Array of level indices (0..3), for the 4-bit BMP
+let outputGray = null;  // Uint8ClampedArray of 0..255 greys, for the 24-bit BMP
+
+// ================= File loading =================
+const drop = $("drop");
+const fileInput = $("file");
+
+drop.addEventListener("click", () => fileInput.click());
+$("replaceBtn").addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", e => { if (e.target.files[0]) loadFile(e.target.files[0]); fileInput.value = ""; });
+
+["dragenter","dragover"].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("drag"); }));
+["dragleave","drop"].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("drag"); }));
+drop.addEventListener("drop", e => {
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+// Allow dropping anywhere once an image is loaded
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => {
+  if (e.target === drop) return;
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+function loadFile(file) {
+  const name = file.name || "";
+  if (/\.(heic|heif)$/i.test(name) || file.type === "image/heic" || file.type === "image/heif") {
+    alert("HEIC/HEIF images aren't supported by browsers.\nConvert to JPEG or PNG first, then drop it in.");
+    return;
+  }
+  decodeImage(file).then(img => {
+    state.fileName = name.replace(/\.[^.]+$/, "") || "wallpaper";
+    state.fitMode = "crop";
+    setSourceFromImage(img);
+    resetAdjustments();          // sliders reset on each new image
+    syncFitButtons();
+    drop.style.display = "none";
+    $("inputStage").classList.add("show");
+    $("downloadBtn").disabled = false;
+    layoutInput();
+    drawInput();
+    render();
+  }).catch(() => {
+    alert("Couldn't decode that file. Supported formats: PNG, JPEG, WebP, GIF.");
+  });
+}
+
+// Decode to a drawable source, honouring EXIF orientation on phone JPEGs.
+// createImageBitmap({imageOrientation:'from-image'}) auto-rotates; fall back to
+// <img> where that option is unsupported.
+function decodeImage(file) {
+  if (window.createImageBitmap) {
+    try {
+      return createImageBitmap(file, { imageOrientation: "from-image" })
+        .catch(() => decodeViaImg(file));
+    } catch (_) {
+      return decodeViaImg(file);
+    }
+  }
+  return decodeViaImg(file);
+}
+
+function decodeViaImg(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("decode failed")); };
+    img.src = url;
+  });
+}
+
+// Copy the loaded image into state.srcCanvas (rotate button transforms it later)
+function setSourceFromImage(img) {
+  const c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  c.getContext("2d").drawImage(img, 0, 0);
+  state.srcCanvas = c;
+  computeBaseCrop();
+}
+
+// Largest target-aspect rectangle fully inside the source
+function computeBaseCrop() {
+  const W = state.srcCanvas.width, H = state.srcCanvas.height;
+  if (W / H > panel.aspect) {         // source wider than panel -> height limited
+    state.baseH = H;
+    state.baseW = H * panel.aspect;
+  } else {                             // source taller -> width limited
+    state.baseW = W;
+    state.baseH = W / panel.aspect;
+  }
+  state.zoom = 1;
+  state.cx = W / 2;
+  state.cy = H / 2;
+  $("zoom").value = 100;
+  $("zoomVal").textContent = "100%";
+}
+
+// Keep the crop rectangle inside the source
+function clampCrop() {
+  const W = state.srcCanvas.width, H = state.srcCanvas.height;
+  const cw = state.baseW / state.zoom, ch = state.baseH / state.zoom;
+  const halfW = cw / 2, halfH = ch / 2;
+  state.cx = Math.max(halfW, Math.min(W - halfW, state.cx));
+  state.cy = Math.max(halfH, Math.min(H - halfH, state.cy));
+}
+
+function currentCropRect() {
+  const cw = state.baseW / state.zoom, ch = state.baseH / state.zoom;
+  return { sx: state.cx - cw / 2, sy: state.cy - ch / 2, sw: cw, sh: ch };
+}
+
+// ================= Input canvas (display + crop overlay) =================
+function layoutInput() {
+  const W = state.srcCanvas.width, H = state.srcCanvas.height;
+  // Fill the panel width; only fall back to a height cap when fitting to width
+  // would make the image taller than the output preview.
+  const wrap = inputCanvas.parentElement;             // .canvas-wrap
+  const availW = Math.max(1, wrap.clientWidth - 20);  // minus 10px padding each side
+  // Cap so the whole input card matches the output card's height. Subtract the
+  // input card's non-canvas overhead (heading, buttons, zoom, hint, padding).
+  const outCard = $("outputCard");
+  const inCard = inputCanvas.closest(".card");
+  let maxH = panel.h / 2;                              // fallback
+  if (outCard && inCard) {
+    const overhead = inCard.offsetHeight - inputCanvas.offsetHeight;
+    maxH = Math.max(40, outCard.offsetHeight - overhead);
+  }
+  let scale = availW / W;
+  if (H * scale > maxH) scale = maxH / H;              // too tall -> constrain by height
+  state.dispScale = scale;
+  inputCanvas.width = Math.round(W * scale);
+  inputCanvas.height = Math.round(H * scale);
+}
+
+function drawInput() {
+  const ctx = inputCanvas.getContext("2d");
+  const s = state.dispScale;
+  ctx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
+  ctx.drawImage(state.srcCanvas, 0, 0, inputCanvas.width, inputCanvas.height);
+
+  if (state.fitMode !== "crop") return; // no crop box in fit mode
+
+  const r = currentCropRect();
+  const x = r.sx * s, y = r.sy * s, w = r.sw * s, h = r.sh * s;
+  // dim outside crop
+  ctx.fillStyle = "rgba(0,0,0,.55)";
+  ctx.fillRect(0, 0, inputCanvas.width, y);
+  ctx.fillRect(0, y + h, inputCanvas.width, inputCanvas.height - (y + h));
+  ctx.fillRect(0, y, x, h);
+  ctx.fillRect(x + w, y, inputCanvas.width - (x + w), h);
+  // crop border + thirds — follow the theme accent
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#88c0d0";
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x + .5, y + .5, w - 1, h - 1);
+  ctx.globalAlpha = 0.4;
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 3; i++) {
+    ctx.beginPath();
+    ctx.moveTo(x + w * i / 3, y); ctx.lineTo(x + w * i / 3, y + h);
+    ctx.moveTo(x, y + h * i / 3); ctx.lineTo(x + w, y + h * i / 3);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Drag to pan the crop
+let dragging = false, lastX = 0, lastY = 0;
+inputCanvas.addEventListener("pointerdown", e => {
+  if (state.fitMode !== "crop") return;
+  dragging = true; lastX = e.clientX; lastY = e.clientY;
+  inputCanvas.classList.add("grabbing");
+  inputCanvas.setPointerCapture(e.pointerId);
+});
+inputCanvas.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  const dx = (e.clientX - lastX) / state.dispScale;
+  const dy = (e.clientY - lastY) / state.dispScale;
+  lastX = e.clientX; lastY = e.clientY;
+  state.cx += dx; state.cy += dy;   // crop box follows the cursor
+  clampCrop();
+  drawInput();
+  scheduleRender();
+});
+inputCanvas.addEventListener("pointerup", () => { dragging = false; inputCanvas.classList.remove("grabbing"); });
+
+// Scroll-wheel over the crop zooms in/out
+inputCanvas.addEventListener("wheel", e => {
+  if (!state.srcCanvas || state.fitMode !== "crop") return;
+  e.preventDefault();
+  const z = state.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1);
+  state.zoom = Math.max(1, Math.min(4, z));
+  const pct = Math.round(state.zoom * 100);
+  $("zoom").value = pct;
+  $("zoomVal").textContent = pct + "%";
+  clampCrop(); drawInput(); scheduleRender();
+}, { passive: false });
+
+// Arrow keys nudge the crop (Shift = larger step). Ignored while typing in a control.
+window.addEventListener("keydown", e => {
+  if (!state.srcCanvas || state.fitMode !== "crop") return;
+  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  const step = e.shiftKey ? 20 : 4;
+  let moved = true;
+  if (e.key === "ArrowLeft")       state.cx -= step;
+  else if (e.key === "ArrowRight") state.cx += step;
+  else if (e.key === "ArrowUp")    state.cy -= step;
+  else if (e.key === "ArrowDown")  state.cy += step;
+  else moved = false;
+  if (!moved) return;
+  e.preventDefault();
+  clampCrop(); drawInput(); scheduleRender();
+});
+
+// Re-fit the input to the panel width on resize (width-driven layout).
+window.addEventListener("resize", () => {
+  if (!state.srcCanvas) return;
+  layoutInput(); drawInput();
+});
+
+// ================= Controls =================
+$("zoom").addEventListener("input", e => {
+  state.zoom = e.target.value / 100;
+  $("zoomVal").textContent = e.target.value + "%";
+  clampCrop(); drawInput(); scheduleRender();
+});
+$("rotateBtn").addEventListener("click", () => {
+  if (!state.srcCanvas) return;
+  // rotate the existing srcCanvas 90° clockwise in place
+  const src = state.srcCanvas;
+  const c = document.createElement("canvas");
+  c.width = src.height; c.height = src.width;
+  const ctx = c.getContext("2d");
+  ctx.translate(c.width / 2, c.height / 2);
+  ctx.rotate(Math.PI / 2);
+  ctx.drawImage(src, -src.width / 2, -src.height / 2);
+  state.srcCanvas = c;
+  computeBaseCrop();
+  layoutInput(); drawInput(); scheduleRender();
+});
+// Each fit button toggles between crop and its own bar colour
+$("fitWhiteBtn").addEventListener("click", () => setFitMode("white"));
+$("fitBlackBtn").addEventListener("click", () => setFitMode("black"));
+
+function setFitMode(mode) {
+  state.fitMode = state.fitMode === mode ? "crop" : mode;
+  syncFitButtons();
+  drawInput(); scheduleRender();
+}
+
+function syncFitButtons() {
+  $("fitWhiteBtn").classList.toggle("active", state.fitMode === "white");
+  $("fitBlackBtn").classList.toggle("active", state.fitMode === "black");
+  $("zoomField").style.display = state.fitMode === "crop" ? "block" : "none";
+}
+
+const sliders = {
+  bright: v => v,
+  contrast: v => v,
+  gamma: v => Number(v).toFixed(2),
+  sharp: v => v,
+};
+for (const id of Object.keys(sliders)) {
+  $(id).addEventListener("input", e => {
+    $(id + "Val").textContent = sliders[id](e.target.value);
+    markPresetCustom();
+    scheduleRender();
+  });
+}
+$("dither").addEventListener("change", () => { markPresetCustom(); scheduleRender(); });
+$("format").addEventListener("change", () => { syncFormatUI(); scheduleRender(); });
+$("device").addEventListener("change", e => setDevice(e.target.value));
+$("portraitBtn").addEventListener("click", () => setOrientation("portrait"));
+$("landscapeBtn").addEventListener("click", () => setOrientation("landscape"));
+$("resetBtn").addEventListener("click", () => { resetAdjustments(); scheduleRender(); });
+$("resetFramingBtn").addEventListener("click", () => {
+  if (!state.srcCanvas) return;
+  state.fitMode = "crop";
+  computeBaseCrop();
+  syncFitButtons();
+  drawInput(); scheduleRender();
+});
+
+// Tuning presets. Values map to the adjustment sliders + dither mode. Rationale:
+// e-ink "white" is really light grey, so photo-ish presets lower contrast and
+// darken mids (gamma > 1) to stop highlights blowing out; line-art/text skip or
+// minimize dithering to keep flat regions and edges crisp.
+const PRESETS = {
+  photo:     { dither: "atkinson",  bright: 0,  contrast: -18, gamma: 1.10, sharp: 40 },
+  portrait:  { dither: "floyd",     bright: 4,  contrast: -25, gamma: 1.15, sharp: 25 },
+  landscape: { dither: "bluenoise", bright: 0,  contrast: 10,  gamma: 0.95, sharp: 70 },
+  punchy:    { dither: "atkinson",  bright: 0,  contrast: 45,  gamma: 1.00, sharp: 60 },
+  lineart:   { dither: "none",      bright: 0,  contrast: 60,  gamma: 1.00, sharp: 0  },
+  text:      { dither: "bayer",     bright: 5,  contrast: 50,  gamma: 1.05, sharp: 90 },
+  soft:      { dither: "atkinson",  bright: 8,  contrast: -35, gamma: 1.25, sharp: 0  },
+};
+
+// One-line explanation shown under the picker for the selected preset.
+const PRESET_HINTS = {
+  custom:    "Adjust the sliders yourself, or pick a preset to start from.",
+  photo:     "Balanced everyday photos — tamed contrast so highlights don't blow out.",
+  portrait:  "Protects skin midtones for smooth, natural-looking faces.",
+  landscape: "Extra sharpness with blue-noise dither for crisp, detailed scenes.",
+  punchy:    "Bold high-contrast graphic look with deep blacks.",
+  lineart:   "No dither, hard edges — best for comics, logos and clean ink.",
+  text:      "Sharp, high-contrast tuning for readable UI, docs and screenshots.",
+  soft:      "Gentle, low-contrast wallpaper that suits e-ink's washed white.",
+};
+
+function updatePresetHint(key) {
+  $("presetHint").textContent = PRESET_HINTS[key] || PRESET_HINTS.custom;
+}
+
+function applyPreset(key) {
+  const p = PRESETS[key];
+  updatePresetHint(key);
+  if (!p) return;                        // "custom" — leave sliders as-is
+  const set = (id, val, label) => {
+    $(id).value = val;
+    $(id + "Val").textContent = label;
+  };
+  set("bright", p.bright, String(p.bright));
+  set("contrast", p.contrast, String(p.contrast));
+  set("gamma", p.gamma, p.gamma.toFixed(2));
+  set("sharp", p.sharp, String(p.sharp));
+  $("dither").value = p.dither;
+  scheduleRender();
+}
+
+// Any manual slider/dither change means we're no longer on a named preset.
+function markPresetCustom() { $("preset").value = "custom"; updatePresetHint("custom"); }
+
+$("preset").addEventListener("change", e => applyPreset(e.target.value));
+
+// Switch target panel (resolution/aspect). Palette + pipeline are unchanged.
+function setDevice(id) {
+  const d = DEVICES[id] || DEVICES.x3;
+  deviceId = d.id;
+  applyPanel();
+}
+
+// Switch portrait/landscape. Same panel, just swaps which dimension is width.
+function setOrientation(o) {
+  orientation = o === "landscape" ? "landscape" : "portrait";
+  $("portraitBtn").classList.toggle("active", orientation === "portrait");
+  $("landscapeBtn").classList.toggle("active", orientation === "landscape");
+  applyPanel();
+}
+
+// Rebuild the panel value for the current device + orientation and re-layout.
+function applyPanel() {
+  panel = makePanel(deviceId, orientation);
+  // resize the output canvas and its (half-size, blended) display box
+  const oc = octx.canvas;
+  oc.width = panel.w; oc.height = panel.h;
+  oc.style.width = (panel.w / 2) + "px";
+  oc.style.height = (panel.h / 2) + "px";
+  syncDeviceFrame();
+  syncFormatUI();
+  if (state.srcCanvas) {          // re-frame the loaded image for the new aspect
+    computeBaseCrop();
+    layoutInput(); drawInput(); render();
+  }
+}
+
+// Match the CSS bezel to the current device + orientation (body colour is
+// independent — set by the Black/White buttons, preserved across changes).
+function syncDeviceFrame() {
+  const f = $("deviceFrame");
+  if (!f) return;
+  f.setAttribute("data-device", deviceId);
+  f.classList.toggle("portrait", orientation === "portrait");
+  f.classList.toggle("landscape", orientation === "landscape");
+}
+
+// Three exclusive views: no bezel, black body, white body. "none" keeps the
+// last colour class (harmless while hidden) so toggling back is instant.
+function setBody(mode) {
+  const f = $("deviceFrame");
+  f.classList.toggle("no-bezel", mode === "none");
+  if (mode === "black" || mode === "white") {
+    f.classList.toggle("black", mode === "black");
+    f.classList.toggle("white", mode === "white");
+  }
+  $("bodyNoneBtn").classList.toggle("active", mode === "none");
+  $("bodyBlackBtn").classList.toggle("active", mode === "black");
+  $("bodyWhiteBtn").classList.toggle("active", mode === "white");
+  try { localStorage.setItem("bodyColor", mode); } catch (_) {}
+  // Bezel on/off changes the output height the input fits against.
+  if (state.srcCanvas) { layoutInput(); drawInput(); }
+}
+$("bodyNoneBtn").addEventListener("click", () => setBody("none"));
+$("bodyBlackBtn").addEventListener("click", () => setBody("black"));
+$("bodyWhiteBtn").addEventListener("click", () => setBody("white"));
+// Restore the saved view (black body is the default).
+(function () {
+  let saved = "black";
+  try { const s = localStorage.getItem("bodyColor"); if (s === "black" || s === "white" || s === "none") saved = s; } catch (_) {}
+  setBody(saved);
+})();
+
+// Dither applies to the two native-4-level paths (4-bit BMP + PXC), not to smooth 24-bit
+function syncFormatUI() {
+  const fmt = $("format").value;
+  const dithered = fmt !== "gray24";
+  $("dither").disabled = !dithered;
+  $("dither").style.opacity = dithered ? "1" : ".45";
+  $("downloadBtn").textContent = fmt === "pxc" ? "Download PXC" : "Download BMP";
+  const dims = panel.w + " × " + panel.h;
+  $("outMeta").textContent = dithered
+    ? dims + " · 4-level grey · device look"
+    : dims + " · 24-bit greyscale · device look";
+  $("formatHint").textContent =
+    fmt === "bmp4" ? "Dither baked in; palette maps 1:1 to the four native panel greys (CrossPoint)."
+  : fmt === "pxc"  ? "CrossPoint's native 2bpp format — same four levels, smaller files."
+  :                  "Smooth greyscale — CrossPoint hard-thresholds this, so gradients may band.";
+  updateSizeMeta();
+}
+
+// Exact output file size for the given format + panel (no encoding needed).
+function outputFileSize(fmt, panel) {
+  const W = panel.w, H = panel.h;
+  if (fmt === "pxc")     return 4 + Math.ceil(W / 4) * H;
+  if (fmt === "gray24")  return 14 + 40 + (((W * 3 + 3) >> 2) << 2) * H;
+  return 14 + 40 + 16 + ((((W * 4) + 31) >> 5) * 4) * H;   // bmp4
+}
+
+function updateSizeMeta() {
+  const fmt = $("format").value;
+  const bytes = outputFileSize(fmt, panel);
+  const kb = bytes < 1024 ? bytes + " B"
+    : bytes < 1024 * 1024 ? (bytes / 1024).toFixed(1) + " KB"
+    : (bytes / 1024 / 1024).toFixed(2) + " MB";
+  const ext = fmt === "pxc" ? ".pxc" : ".bmp";
+  $("sizeMeta").textContent = "≈ " + kb + " · " + deviceId.toUpperCase() + " " + ext;
+}
+syncFormatUI();
+
+function resetAdjustments() {
+  $("bright").value = 0; $("brightVal").textContent = "0";
+  $("contrast").value = 0; $("contrastVal").textContent = "0";
+  $("gamma").value = 1; $("gammaVal").textContent = "1.00";
+  $("sharp").value = 0; $("sharpVal").textContent = "0";
+  $("dither").value = "atkinson";
+  $("preset").value = "custom";
+  updatePresetHint("custom");
+}
+
+// ================= Rendering pipeline =================
+let renderTimer = null;
+function scheduleRender() {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(render, 60);   // debounce for responsiveness
+}
+
+// Orchestration only: rasterize (canvas adapter) -> read controls (DOM adapter)
+// -> pure core -> present (canvas adapter). No image math lives here.
+function render() {
+  if (!state.srcCanvas) return;
+  const stage = buildStage();                                              // crop/fit + resample
+  const rgba = stage.getContext("2d").getImageData(0, 0, panel.w, panel.h).data;
+  const adjustments = readAdjustments();
+  const mode = $("format").value === "gray24" ? "smooth" : "quantized";
+  const result = renderWallpaper(rgba, panel, adjustments, mode);
+  outputIdx = result.idx;                                                  // caller-side state
+  outputGray = result.gray;
+  present(result);
+}
+
+// Pure, DOM-free core: panel-sized RGBA + geometry + adjustments -> level
+// indices (quantized) or smooth greys. Rec.709 greyscale, tone, sharpen and
+// dither all live behind this one interface. Exposed on window for testing:
+// synthesize a tiny RGBA array and assert on the returned buffers.
+function renderWallpaper(rgba, panel, adjustments, mode) {
+  const { w, h } = panel;
+  const N = w * h;
+
+  // greyscale (Rec.709)
+  const g = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const o = i * 4;
+    g[i] = 0.2126 * rgba[o] + 0.7152 * rgba[o + 1] + 0.0722 * rgba[o + 2];
+  }
+
+  applyTone(g, adjustments);                       // brightness, contrast, gamma
+  const amt = adjustments.sharp / 100;
+  if (amt > 0) applySharpen(g, amt, w, h);         // optional unsharp mask
+
+  if (mode === "smooth") {
+    // Smooth greyscale. NOTE: CrossPoint hard-thresholds this at 45/70/140
+    // (no dithering), so gradient-heavy images may band on-device.
+    const gray = new Uint8ClampedArray(N);
+    for (let i = 0; i < N; i++) gray[i] = Math.round(g[i]);
+    return { idx: null, gray };
+  }
+  // Dither + quantize to the four native levels. CrossPoint maps this palette
+  // 1:1 to panel states (no re-quantization) — the correct path.
+  return { idx: dither(g, adjustments.dither, w, h), gray: null };
+}
+if (typeof window !== "undefined") window.renderWallpaper = renderWallpaper;
+
+// Adapter: read the current tuning controls into a plain data object.
+function readAdjustments() {
+  return {
+    bright:   +$("bright").value,
+    contrast: +$("contrast").value,
+    gamma:    +$("gamma").value,
+    sharp:    +$("sharp").value,
+    dither:   $("dither").value,
+  };
+}
+
+// Adapter: map the core's buffers to preview RGBA on the output canvas.
+function present({ idx, gray }) {
+  const N = panel.w * panel.h;
+  const out = octx.createImageData(panel.w, panel.h);
+  for (let i = 0; i < N; i++) {
+    const v = gray ? gray[i] : LEVELS[idx[i]];
+    const o = i * 4;
+    out.data[o] = out.data[o + 1] = out.data[o + 2] = v;
+    out.data[o + 3] = 255;
+  }
+  octx.putImageData(out, 0, 0);
+}
+
+function buildStage() {
+  const stage = document.createElement("canvas");
+  stage.width = panel.w; stage.height = panel.h;
+  const ctx = stage.getContext("2d");
+
+  if (state.fitMode !== "crop") {
+    ctx.fillStyle = state.fitMode === "black" ? "#000" : "#fff";
+    ctx.fillRect(0, 0, panel.w, panel.h);
+    const src = state.srcCanvas;
+    const scale = Math.min(panel.w / src.width, panel.h / src.height);
+    const w = Math.round(src.width * scale), h = Math.round(src.height * scale);
+    const fitted = resample(src, 0, 0, src.width, src.height, w, h);
+    ctx.drawImage(fitted, Math.round((panel.w - w) / 2), Math.round((panel.h - h) / 2));
+  } else {
+    const r = currentCropRect();
+    const resampled = resample(state.srcCanvas, r.sx, r.sy, r.sw, r.sh, panel.w, panel.h);
+    ctx.drawImage(resampled, 0, 0);
+  }
+  return stage;
+}
+
+// Stepped (halving) high-quality downscale of a source region
+function resample(src, sx, sy, sw, sh, dw, dh) {
+  let cur = document.createElement("canvas");
+  cur.width = Math.max(1, Math.round(sw));
+  cur.height = Math.max(1, Math.round(sh));
+  let cx = cur.getContext("2d");
+  cx.drawImage(src, sx, sy, sw, sh, 0, 0, cur.width, cur.height);
+  let cw = cur.width, ch = cur.height;
+  while (cw * 0.5 > dw && ch * 0.5 > dh) {
+    const nw = Math.max(dw, Math.round(cw * 0.5));
+    const nh = Math.max(dh, Math.round(ch * 0.5));
+    const t = document.createElement("canvas");
+    t.width = nw; t.height = nh;
+    const tc = t.getContext("2d");
+    tc.imageSmoothingEnabled = true; tc.imageSmoothingQuality = "high";
+    tc.drawImage(cur, 0, 0, cw, ch, 0, 0, nw, nh);
+    cur = t; cw = nw; ch = nh;
+  }
+  const out = document.createElement("canvas");
+  out.width = dw; out.height = dh;
+  const oc = out.getContext("2d");
+  oc.imageSmoothingEnabled = true; oc.imageSmoothingQuality = "high";
+  oc.drawImage(cur, 0, 0, cw, ch, 0, 0, dw, dh);
+  return out;
+}
+
+function applyTone(g, adjustments) {
+  const bright = adjustments.bright;                 // -100..100
+  const C = adjustments.contrast * 2.55;             // -255..255
+  const cf = (259 * (C + 255)) / (255 * (259 - C));  // contrast factor
+  const gamma = adjustments.gamma;                   // 0.2..3 (higher = darker mids)
+  for (let i = 0; i < g.length; i++) {
+    let v = g[i] + bright;
+    v = cf * (v - 128) + 128;
+    v = v < 0 ? 0 : v > 255 ? 255 : v;
+    v = 255 * Math.pow(v / 255, gamma);
+    g[i] = v;
+  }
+}
+
+// Unsharp mask: g += amt * (g - blur(g)), using a separable 3-tap gaussian
+function applySharpen(g, amt, W, H) {
+  const tmp = new Float32Array(g.length);
+  const blur = new Float32Array(g.length);
+  for (let y = 0; y < H; y++) {          // horizontal pass
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const l = g[i - (x > 0 ? 1 : 0)];
+      const r = g[i + (x < W - 1 ? 1 : 0)];
+      tmp[i] = (l + 2 * g[i] + r) / 4;
+    }
+  }
+  for (let y = 0; y < H; y++) {          // vertical pass
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const u = tmp[i - (y > 0 ? W : 0)];
+      const d = tmp[i + (y < H - 1 ? W : 0)];
+      blur[i] = (u + 2 * tmp[i] + d) / 4;
+    }
+  }
+  for (let i = 0; i < g.length; i++) {
+    let v = g[i] + amt * (g[i] - blur[i]);
+    g[i] = v < 0 ? 0 : v > 255 ? 255 : v;
+  }
+}
+
+// ================= Dithering =================
+function nearestIdx(v) {
+  let k = Math.round(v / 85);      // levels are 0,85,170,255
+  return k < 0 ? 0 : k > 3 ? 3 : k;
+}
+
+// Error-diffusion kernels: [dx, dy, weight]; error is spread as weight/divisor.
+// Atkinson only diffuses 6/8 of the error (the classic "washed" look).
+const ED_KERNELS = {
+  floyd:    { div: 16, pts: [[1,0,7],[-1,1,3],[0,1,5],[1,1,1]] },
+  atkinson: { div: 8,  pts: [[1,0,1],[2,0,1],[-1,1,1],[0,1,1],[1,1,1],[0,2,1]] },
+  jarvis:   { div: 48, pts: [[1,0,7],[2,0,5],
+                             [-2,1,3],[-1,1,5],[0,1,7],[1,1,5],[2,1,3],
+                             [-2,2,1],[-1,2,3],[0,2,5],[1,2,3],[2,2,1]] },
+  stucki:   { div: 42, pts: [[1,0,8],[2,0,4],
+                             [-2,1,2],[-1,1,4],[0,1,8],[1,1,4],[2,1,2],
+                             [-2,2,1],[-1,2,2],[0,2,4],[1,2,2],[2,2,1]] },
+};
+
+function dither(g, mode, w, h) {
+  if (mode === "bayer")     return orderedDither(g, getBayer(), w, h);
+  if (mode === "bluenoise") return orderedDither(g, getBlueNoise(), w, h);
+  return errorDiffuse(g, mode, w, h);
+}
+
+// Error-diffusion (and "none", which just quantizes with no spread).
+function errorDiffuse(g, mode, W, H) {
+  const buf = Float32Array.from(g);   // work on a copy we can diffuse into
+  const idx = new Uint8Array(W * H);
+  const kern = ED_KERNELS[mode];
+  const add = (x, y, e) => { if (x >= 0 && x < W && y >= 0 && y < H) buf[y * W + x] += e; };
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const k = nearestIdx(buf[i]);
+      idx[i] = k;
+      if (!kern) continue;            // "none" / unknown -> nearest only
+      const err = (buf[i] - LEVELS[k]) / kern.div;
+      for (const [dx, dy, w] of kern.pts) add(x + dx, y + dy, err * w);
+    }
+  }
+  return idx;
+}
+
+// Ordered dithering across the four levels using a normalized threshold matrix.
+function orderedDither(g, mt, W, H) {
+  const { n, T } = mt;
+  const idx = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) {
+    const trow = (y % n) * n;
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      let f = g[i] / 85;                        // 0..3 in level units
+      if (f < 0) f = 0;
+      let base = Math.floor(f);
+      if (base >= 3) { idx[i] = 3; continue; }
+      idx[i] = (f - base) > T[trow + (x % n)] ? base + 1 : base;
+    }
+  }
+  return idx;
+}
+
+// Bayer 8×8 threshold matrix, normalized to (0,1). Cached after first use.
+let _bayer = null;
+function getBayer() {
+  if (_bayer) return _bayer;
+  const n = 8;
+  let m = [[0]], size = 1;
+  while (size < n) {
+    const ns = size * 2, nm = [];
+    for (let y = 0; y < ns; y++) {
+      nm.push([]);
+      for (let x = 0; x < ns; x++) {
+        const add = x < size ? (y < size ? 0 : 3) : (y < size ? 2 : 1);
+        nm[y][x] = 4 * m[y % size][x % size] + add;
+      }
+    }
+    m = nm; size = ns;
+  }
+  const T = new Float32Array(n * n);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) T[y * n + x] = (m[y][x] + 0.5) / (n * n);
+  _bayer = { n, T };
+  return _bayer;
+}
+
+// Blue-noise threshold matrix via the void-and-cluster method (Ulichney).
+// Generated once, lazily, and cached — the panel tiles it seamlessly.
+let _blue = null;
+function getBlueNoise() {
+  if (_blue) return _blue;
+  const n = 64, N = n * n;
+  const sigma = 1.9, rad = Math.ceil(sigma * 3);
+  const kern = [];
+  for (let dy = -rad; dy <= rad; dy++)
+    for (let dx = -rad; dx <= rad; dx++)
+      kern.push([dx, dy, Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma))]);
+
+  const E = new Float64Array(N);
+  const isOne = new Uint8Array(N);
+  const at = (x, y) => (((y % n) + n) % n) * n + (((x % n) + n) % n);
+  const splat = (x, y, s) => { for (const [dx, dy, w] of kern) E[at(x + dx, y + dy)] += s * w; };
+  const tightestCluster = () => { let b = -1, be = -Infinity; for (let p = 0; p < N; p++) if (isOne[p] && E[p] > be) { be = E[p]; b = p; } return b; };
+  const largestVoid    = () => { let b = -1, be =  Infinity; for (let p = 0; p < N; p++) if (!isOne[p] && E[p] < be) { be = E[p]; b = p; } return b; };
+
+  // deterministic initial binary pattern (~10% ones)
+  let seed = 1234567;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const ones = Math.floor(N / 10);
+  for (let placed = 0; placed < ones; ) {
+    const p = Math.floor(rnd() * N);
+    if (!isOne[p]) { isOne[p] = 1; splat(p % n, (p / n) | 0, 1); placed++; }
+  }
+  // phase 0: homogenize — move tightest cluster into largest void until stable
+  for (let guard = 0; guard < N * 4; guard++) {
+    const tc = tightestCluster();
+    isOne[tc] = 0; splat(tc % n, (tc / n) | 0, -1);
+    const lv = largestVoid();
+    if (lv === tc) { isOne[tc] = 1; splat(tc % n, (tc / n) | 0, 1); break; }
+    isOne[lv] = 1; splat(lv % n, (lv / n) | 0, 1);
+  }
+
+  const proto = isOne.slice();
+  const rank = new Int32Array(N).fill(-1);
+  // phase 1: remove tightest clusters, ranks (ones-1)..0
+  for (let r = ones - 1; r >= 0; r--) {
+    const tc = tightestCluster();
+    rank[tc] = r; isOne[tc] = 0; splat(tc % n, (tc / n) | 0, -1);
+  }
+  // phase 2: from the prototype, fill largest voids, ranks ones..N-1
+  E.fill(0);
+  for (let p = 0; p < N; p++) { isOne[p] = proto[p]; if (proto[p]) splat(p % n, (p / n) | 0, 1); }
+  for (let r = ones; r < N; r++) {
+    const lv = largestVoid();
+    rank[lv] = r; isOne[lv] = 1; splat(lv % n, (lv / n) | 0, 1);
+  }
+
+  const T = new Float32Array(N);
+  for (let p = 0; p < N; p++) T[p] = (rank[p] + 0.5) / N;
+  _blue = { n, T };
+  return _blue;
+}
+
+// ================= BMP writer =================
+// Owns the whole BMP layout: 14-byte file header, 40-byte DIB header, offset
+// and size math, row padding, and the Blob. Callers describe the variant
+// (bpp, optional palette, row order) and supply packRow to fill one row's
+// pixel bytes. palette (array of [B,G,R,A] quads) drives biClrUsed /
+// biClrImportant / dataOffset; topDown picks the biHeight sign + row order.
+function writeBMP({ w, h, bpp, palette, topDown, packRow }) {
+  const W = w, H = h;
+  const rowSize = (((W * bpp) + 31) >> 5) * 4;   // bytes per row, padded to 4
+  const pixelArraySize = rowSize * H;
+  const paletteLen = palette ? palette.length : 0;
+  const dataOffset = 14 + 40 + paletteLen * 4;
+  const fileSize = dataOffset + pixelArraySize;
+
+  const buf = new ArrayBuffer(fileSize);
+  const dv = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+  let p = 0;
+  const u16 = v => { dv.setUint16(p, v, true); p += 2; };
+  const u32 = v => { dv.setUint32(p, v, true); p += 4; };
+  const i32 = v => { dv.setInt32(p, v, true); p += 4; };
+
+  u8[0] = 0x42; u8[1] = 0x4D; p = 2;             // 'BM'
+  u32(fileSize); u16(0); u16(0); u32(dataOffset);
+  u32(40); i32(W); i32(topDown ? -H : H); u16(1); u16(bpp);
+  u32(0);                                         // BI_RGB
+  u32(pixelArraySize);
+  i32(2835); i32(2835);
+  u32(paletteLen);                                // biClrUsed
+  u32(paletteLen);                                // biClrImportant
+  for (let k = 0; k < paletteLen; k++) {          // palette entries (BGRA)
+    const e = palette[k];
+    u8[p++] = e[0]; u8[p++] = e[1]; u8[p++] = e[2]; u8[p++] = e[3];
+  }
+  // Storage order: top-down writes y=0..H-1; bottom-up writes y=H-1..0.
+  for (let r = 0; r < H; r++) {
+    const y = topDown ? r : H - 1 - r;
+    const rowStart = p;
+    packRow(u8, p, y);
+    p = rowStart + rowSize;   // honour row padding
+  }
+  return new Blob([buf], { type: "image/bmp" });
+}
+
+// ================= 4-bit BMP encoder =================
+// 4-bit indexed BMP in the exact layout CrossPoint's native-palette loader
+// wants: palette = the four native greys, top-down rows (negative biHeight).
+// CrossPoint then maps each index 1:1 to a panel state.
+function encodeBMP4(idx, panel) {
+  const W = panel.w;
+  return writeBMP({
+    w: W, h: panel.h, bpp: 4, topDown: true,
+    palette: LEVELS.map(v => [v, v, v, 0]),       // four native greys (BGRA)
+    packRow: (u8, p, y) => {
+      for (let x = 0; x < W; x += 2) {
+        const hi = idx[y * W + x] & 0x0F;
+        const lo = (x + 1 < W ? idx[y * W + x + 1] : 0) & 0x0F;
+        u8[p++] = (hi << 4) | lo;
+      }
+    },
+  });
+}
+
+// ================= PXC encoder =================
+// CrossPoint native format: uint16-LE width, uint16-LE height, then 2 bits per
+// pixel (the level index 0..3), MSB first, row-major. Each byte packs 4 pixels
+// [p0 p1 p2 p3] into bits [7:6 5:4 3:2 1:0]; each row is ceil(width/4) bytes,
+// not packed across row boundaries.
+function encodePXC(idx, panel) {
+  const W = panel.w, H = panel.h;
+  const rowBytes = Math.ceil(W / 4);
+  const buf = new ArrayBuffer(4 + rowBytes * H);
+  const dv = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+  dv.setUint16(0, W, true);
+  dv.setUint16(2, H, true);
+  let p = 4;
+  for (let y = 0; y < H; y++) {           // top-down, row-major
+    for (let x = 0; x < W; x += 4) {
+      let b = 0;
+      for (let k = 0; k < 4; k++) {        // p0 in the high bits
+        const v = (x + k < W) ? (idx[y * W + x + k] & 0x03) : 0;
+        b |= v << (6 - k * 2);
+      }
+      u8[p++] = b;
+    }
+  }
+  return new Blob([buf], { type: "application/octet-stream" });
+}
+
+// ================= 24-bit BMP encoder =================
+// Uncompressed 24-bit BMP (smooth greyscale: B=G=R per pixel)
+function encodeBMP24(gray, panel) {
+  const W = panel.w;
+  return writeBMP({
+    w: W, h: panel.h, bpp: 24, topDown: false,   // bottom-up, no palette
+    packRow: (u8, p, y) => {
+      for (let x = 0; x < W; x++) {
+        const v = gray[y * W + x];
+        u8[p++] = v; u8[p++] = v; u8[p++] = v;    // BGR
+      }
+    },
+  });
+}
+
+// ================= Theme toggle =================
+// Dark is the default; the choice persists in localStorage. The early inline
+// <head> script has already applied any saved theme before first paint.
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  const dark = theme === "dark";
+  $("themeIcon").textContent = dark ? "☀️" : "🌙";
+  $("themeLabel").textContent = dark ? "Light" : "Dark";
+  $("themeToggle").setAttribute("aria-pressed", String(!dark));
+  try { localStorage.setItem("theme", theme); } catch (_) {}
+}
+applyTheme(document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
+$("themeToggle").addEventListener("click", () => {
+  const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+  applyTheme(next);
+});
+
+$("downloadBtn").addEventListener("click", () => {
+  const fmt = $("format").value;
+  let blob = null, ext = ".bmp";
+  if (fmt === "pxc") { if (outputIdx) { blob = encodePXC(outputIdx, panel); ext = ".pxc"; } }
+  else if (fmt === "bmp4") { if (outputIdx) blob = encodeBMP4(outputIdx, panel); }
+  else if (outputGray) blob = encodeBMP24(outputGray, panel);
+  if (!blob) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = state.fileName + "-" + deviceId + ext;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+</script>
+</body>
+</html>
